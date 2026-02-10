@@ -1,0 +1,33 @@
+{
+  "include": [
+    "./src/**/*.ts",
+  ],
+  "compilerOptions": {
+    "target": "es2019",
+    "module": "commonjs",
+    "declaration": true,
+    "typeRoots": ["types", "node_modules/@types"],
+    "esModuleInterop": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "sourceMap": true,
+    "inlineSources": true,
+    "experimentalDecorators": true,
+    "allowUnreachableCode": false,
+    "strict": true,
+    "skipLibCheck": true,
+    "useUnknownInCatchVariables": false,
+  },
+  "exclude": [
+    "node_modules",
+    "packages/*/tmp",
+    "packages/*/dist",
+    "packages/*/node_modules",
+    "test-packages/*/tmp",
+    "test-packages/*/dist",
+    "test-packages/*/node_modules",
+    "tmp",
+    "tests/scenarios/output",
+    "packages/router/src"
+  ]
+}
