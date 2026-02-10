@@ -1,5 +1,5 @@
-import { ResolverLoader, virtualContent } from '@embroider/core';
-import type { LoaderContext } from '@rspack/core';
+import { ResolverLoader, virtualContent } from "@embroider/core";
+import type { LoaderContext } from "@rspack/core";
 
 let resolverLoader: ResolverLoader | undefined;
 
@@ -11,16 +11,20 @@ function setup(appRoot: string): ResolverLoader {
 }
 
 export default function virtualLoader(this: LoaderContext<unknown>) {
-  if (typeof this.query === 'string' && this.query[0] === '?') {
+  if (typeof this.query === "string" && this.query[0] === "?") {
     let params = new URLSearchParams(this.query);
-    let filename = params.get('f');
-    let appRoot = params.get('a');
+    let filename = params.get("f");
+    let appRoot = params.get("a");
     if (!filename || !appRoot) {
-      throw new Error(`bug in @embroider/rspack virtual loader, cannot locate params in ${this.query}`);
+      throw new Error(
+        `bug in embroider-rspack virtual loader, cannot locate params in ${this.query}`,
+      );
     }
     let { resolver } = setup(appRoot);
     this.resourcePath = filename;
     return virtualContent(filename, resolver);
   }
-  throw new Error(`@embroider/rspack/src/virtual-loader received unexpected request: ${this.query}`);
+  throw new Error(
+    `embroider-rspack/src/virtual-loader received unexpected request: ${this.query}`,
+  );
 }

@@ -1,4 +1,4 @@
-import type { Configuration } from '@rspack/core';
+import type { Configuration } from "@rspack/core";
 
 // [babel-loader](https://webpack.js.org/loaders/babel-loader/#options) specific options.
 // This does not include the babel configuration, which is pulled from the app, only the
@@ -13,7 +13,7 @@ export interface BabelLoaderOptions {
 export interface Options {
   // This allows you to extend the rspack config in arbitrary ways. Your
   // changes will get applied on top of the defaults provided by
-  // @embroider/rspack.
+  // embroider-rspack.
   //
   // Note: Rspack's configuration API is highly compatible with webpack's,
   // so this property is named `webpackConfig` for backward compatibility.

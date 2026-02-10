@@ -9,9 +9,25 @@
   getting script vs module context correct).
 */
 
-import type { AppMeta, BundleSummary, Packager, PackagerConstructor, Variant, ResolverOptions } from '@embroider/core';
-import { HTMLEntrypoint, getAppMeta, getPackagerCacheDir, getOrCreate } from '@embroider/core';
-import { locateEmbroiderWorkingDir, RewrittenPackageCache, tmpdir } from '@embroider/shared-internals';
+import type {
+  AppMeta,
+  BundleSummary,
+  Packager,
+  PackagerConstructor,
+  Variant,
+  ResolverOptions,
+} from "@embroider/core";
+import {
+  HTMLEntrypoint,
+  getAppMeta,
+  getPackagerCacheDir,
+  getOrCreate,
+} from "@embroider/core";
+import {
+  locateEmbroiderWorkingDir,
+  RewrittenPackageCache,
+  tmpdir,
+} from "@embroider/shared-internals";
 import type {
   Configuration,
   RuleSetUseItem,
@@ -21,35 +37,41 @@ import type {
   MultiStats,
   Stats as RspackStats,
   StatsChunk,
-} from '@rspack/core';
-import rspack from '@rspack/core';
-import type { Stats as FsStats } from 'fs-extra';
-import { readFileSync, outputFileSync, copySync, statSync, readJSONSync } from 'fs-extra';
-import { join, dirname, relative, sep } from 'path';
-import isEqual from 'lodash/isEqual';
-import mergeWith from 'lodash/mergeWith';
-import flatMap from 'lodash/flatMap';
-import makeDebug from 'debug';
-import { format } from 'util';
-import type { Options, BabelLoaderOptions } from './options';
-import crypto from 'crypto';
-import supportsColor from 'supports-color';
-import type { Options as HbsLoaderOptions } from '@embroider/hbs-loader';
-import type { Options as EmbroiderPluginOptions } from './rspack-resolver-plugin';
-import { EmbroiderPlugin } from './rspack-resolver-plugin';
+} from "@rspack/core";
+import rspack from "@rspack/core";
+import type { Stats as FsStats } from "fs-extra";
+import {
+  readFileSync,
+  outputFileSync,
+  copySync,
+  statSync,
+  readJSONSync,
+} from "fs-extra";
+import { join, dirname, relative, sep } from "path";
+import isEqual from "lodash/isEqual";
+import mergeWith from "lodash/mergeWith";
+import flatMap from "lodash/flatMap";
+import makeDebug from "debug";
+import { format } from "util";
+import type { Options, BabelLoaderOptions } from "./options";
+import crypto from "crypto";
+import supportsColor from "supports-color";
+import type { Options as HbsLoaderOptions } from "@embroider/hbs-loader";
+import type { Options as EmbroiderPluginOptions } from "./rspack-resolver-plugin";
+import { EmbroiderPlugin } from "./rspack-resolver-plugin";
 
-const debug = makeDebug('embroider:debug');
+const debug = makeDebug("embroider:debug");
 
 // This is a type-only import, so it gets compiled away. At runtime, we load
 // terser lazily so it's only loaded for production builds that use it. Don't
 // add any non-type-only imports here.
-import type { MinifyOptions } from 'terser';
+import type { MinifyOptions } from "terser";
 
 interface AppInfo {
   entrypoints: HTMLEntrypoint[];
   otherAssets: string[];
-  babel: AppMeta['babel'];
-  rootURL: AppMeta['root-url'];
+  babel: AppMeta["babel"];
+  rootURL: AppMeta["root-url"];
   publicAssetURL: string;
   resolverConfig: ResolverOptions;
   packageName: string;
@@ -60,7 +82,9 @@ function equalAppInfo(left: AppInfo, right: AppInfo): boolean {
   return (
     isEqual(left.babel, right.babel) &&
     left.entrypoints.length === right.entrypoints.length &&
-    left.entrypoints.every((e, index) => isEqual(e.modules, right.entrypoints[index].modules))
+    left.entrypoints.every((e, index) =>
+      isEqual(e.modules, right.entrypoints[index].modules),
+    )
   );
 }
 
@@ -74,14 +98,14 @@ function createBarrier(): [BeginFn, IncrementFn] {
   return [begin, increment];
 
   function begin(newLimit: number) {
-    if (!done) flush(new Error('begin called before limit reached'));
+    if (!done) flush(new Error("begin called before limit reached"));
     done = false;
     limit = newLimit;
   }
 
   async function increment() {
     if (done) {
-      throw new Error('increment after limit reach');
+      throw new Error("increment after limit reach");
     }
     const promise = new Promise<void>((resolve, reject) => {
       barriers.push([resolve, reject]);
@@ -107,7 +131,7 @@ function createBarrier(): [BeginFn, IncrementFn] {
 // just exporting our class directly, we export a const constructor of the
 // correct type.
 const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
-  static annotation = '@embroider/rspack';
+  static annotation = "embroider-rspack";
 
   private pathToVanillaApp: string;
   private extraConfig: Configuration | undefined;
@@ -126,13 +150,15 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
     private outputPath: string,
     private variants: Variant[],
     private consoleWrite: (msg: string) => void,
-    options?: Options
+    options?: Options,
   ) {
     // Note: rspack.version returns webpack compatibility version (5.x), not rspack version (1.x)
     // The peerDependency on @rspack/core already enforces the correct version
 
-    let packageCache = RewrittenPackageCache.shared('embroider', appRoot);
-    this.pathToVanillaApp = packageCache.maybeMoved(packageCache.get(appRoot)).root;
+    let packageCache = RewrittenPackageCache.shared("embroider", appRoot);
+    this.pathToVanillaApp = packageCache.maybeMoved(
+      packageCache.get(appRoot),
+    ).root;
     this.extraConfig = options?.webpackConfig;
     this.publicAssetURL = options?.publicAssetURL;
     this.extraBabelLoaderOptions = options?.babelLoaderOptions;
@@ -156,67 +182,88 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
 
   async build(): Promise<void> {
     try {
-      debug('Starting rspack build');
+      debug("Starting rspack build");
       this._bundleSummary = undefined;
       this.beginBarrier(this.variants.length);
       let appInfo = this.examineApp();
-      debug('App examined, creating rspack compiler');
+      debug("App examined, creating rspack compiler");
       let compiler = this.getRspack(appInfo);
-      debug('Compiler created, running rspack');
+      debug("Compiler created, running rspack");
       await this.runRspack(compiler);
-      debug('Rspack build complete');
+      debug("Rspack build complete");
     } catch (error) {
-      debug('Rspack build failed with error: %O', error);
+      debug("Rspack build failed with error: %O", error);
       throw error;
     }
   }
 
   private examineApp(): AppInfo {
     let meta = getAppMeta(this.pathToVanillaApp);
-    let rootURL = meta['ember-addon']['root-url'];
-    let babel = meta['ember-addon']['babel'];
+    let rootURL = meta["ember-addon"]["root-url"];
+    let babel = meta["ember-addon"]["babel"];
     let entrypoints = [];
     let otherAssets = [];
     let publicAssetURL = this.publicAssetURL || rootURL;
 
-    for (let relativePath of meta['ember-addon'].assets) {
+    for (let relativePath of meta["ember-addon"].assets) {
       if (/\.html/i.test(relativePath)) {
-        entrypoints.push(new HTMLEntrypoint(this.pathToVanillaApp, rootURL, publicAssetURL, relativePath));
+        entrypoints.push(
+          new HTMLEntrypoint(
+            this.pathToVanillaApp,
+            rootURL,
+            publicAssetURL,
+            relativePath,
+          ),
+        );
       } else {
         otherAssets.push(relativePath);
       }
     }
 
     let resolverConfig: EmbroiderPluginOptions = readJSONSync(
-      join(locateEmbroiderWorkingDir(this.appRoot), 'resolver.json')
+      join(locateEmbroiderWorkingDir(this.appRoot), "resolver.json"),
     );
 
-    return { entrypoints, otherAssets, babel, rootURL, resolverConfig, publicAssetURL, packageName: meta.name };
+    return {
+      entrypoints,
+      otherAssets,
+      babel,
+      rootURL,
+      resolverConfig,
+      publicAssetURL,
+      packageName: meta.name,
+    };
   }
 
-  private configureRspack(appInfo: AppInfo, variant: Variant, variantIndex: number): Configuration {
-    const { entrypoints, babel, publicAssetURL, packageName, resolverConfig } = appInfo;
+  private configureRspack(
+    appInfo: AppInfo,
+    variant: Variant,
+    variantIndex: number,
+  ): Configuration {
+    const { entrypoints, babel, publicAssetURL, packageName, resolverConfig } =
+      appInfo;
 
     let entry: { [name: string]: string } = {};
     for (let entrypoint of entrypoints) {
       for (let moduleName of entrypoint.modules) {
-        entry[moduleName] = './' + moduleName;
+        entry[moduleName] = "./" + moduleName;
       }
     }
 
-    let { plugins: stylePlugins, loaders: styleLoaders } = this.setupStyleConfig(variant);
+    let { plugins: stylePlugins, loaders: styleLoaders } =
+      this.setupStyleConfig(variant);
 
     let babelLoaderOptions = makeBabelLoaderOptions(
       babel.majorVersion,
       variant,
       join(this.pathToVanillaApp, babel.filename),
-      this.extraBabelLoaderOptions
+      this.extraBabelLoaderOptions,
     );
 
     let babelLoaderPrefix = `babel-loader-9?${JSON.stringify(babelLoaderOptions.options)}!`;
 
     return {
-      mode: variant.optimizeForProduction ? 'production' : 'development',
+      mode: variant.optimizeForProduction ? "production" : "development",
       context: this.pathToVanillaApp,
       entry,
       performance: {
@@ -226,10 +273,17 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
         ...stylePlugins,
         new EmbroiderPlugin(resolverConfig, babelLoaderPrefix),
         (compiler: Compiler) => {
-          compiler.hooks.done.tapPromise('EmbroiderPlugin', async (stats: RspackStats) => {
-            this.summarizeStats(stats, variant, variantIndex);
-            await this.writeFiles(this.bundleSummary, this.lastAppInfo!, variantIndex);
-          });
+          compiler.hooks.done.tapPromise(
+            "EmbroiderPlugin",
+            async (stats: RspackStats) => {
+              this.summarizeStats(stats, variant, variantIndex);
+              await this.writeFiles(
+                this.bundleSummary,
+                this.lastAppInfo!,
+                variantIndex,
+              );
+            },
+          );
         },
       ],
       node: false,
@@ -240,7 +294,7 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
             use: nonNullArray([
               babelLoaderOptions,
               {
-                loader: require.resolve('@embroider/hbs-loader'),
+                loader: require.resolve("@embroider/hbs-loader"),
                 options: (() => {
                   let options: HbsLoaderOptions = {
                     compatModuleNaming: {
@@ -261,7 +315,7 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
                 babel.majorVersion,
                 variant,
                 join(this.pathToVanillaApp, babel.filename),
-                this.extraBabelLoaderOptions
+                this.extraBabelLoaderOptions,
               ),
             ]),
           },
@@ -279,14 +333,14 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
       },
       optimization: {
         splitChunks: {
-          chunks: 'all',
+          chunks: "all",
         },
       },
       resolve: {
         extensions: resolverConfig.resolvableExtensions,
         // Allow fallback to mainFields when exports field doesn't have the requested subpath
         // This is needed for Embroider's virtual files like -embroider-implicit-test-modules.js
-        mainFields: ['browser', 'module', 'main'],
+        mainFields: ["browser", "module", "main"],
         // For browser builds, prefer browser conditions over node
         // conditionNames: ['browser', 'import', 'require', 'default'],
       },
@@ -295,9 +349,9 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
           // these loaders are our dependencies, not the app's dependencies. I'm
           // not overriding the default loader resolution rules in case the app also
           // wants to control those.
-          'babel-loader-9': require.resolve('@embroider/babel-loader-9'),
-          'css-loader': require.resolve('css-loader'),
-          'style-loader': require.resolve('style-loader'),
+          "babel-loader-9": require.resolve("@embroider/babel-loader-9"),
+          "css-loader": require.resolve("css-loader"),
+          "style-loader": require.resolve("style-loader"),
         },
       },
     };
@@ -307,7 +361,11 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
   private lastRspack: MultiCompiler | undefined;
 
   private getRspack(appInfo: AppInfo) {
-    if (this.lastRspack && this.lastAppInfo && equalAppInfo(appInfo, this.lastAppInfo)) {
+    if (
+      this.lastRspack &&
+      this.lastAppInfo &&
+      equalAppInfo(appInfo, this.lastAppInfo)
+    ) {
       debug(`reusing rspack config`);
       // the appInfos result in equal rspack configs so we don't need to
       // reconfigure rspack. But they may contain other changes (like HTML
@@ -319,13 +377,22 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
     }
     debug(`configuring rspack`);
     let config = this.variants.map((variant, variantIndex) =>
-      mergeWith({}, this.configureRspack(appInfo, variant, variantIndex), this.extraConfig, appendArrays)
+      mergeWith(
+        {},
+        this.configureRspack(appInfo, variant, variantIndex),
+        this.extraConfig,
+        appendArrays,
+      ),
     );
     this.lastAppInfo = appInfo;
     return (this.lastRspack = rspack(config));
   }
 
-  private async writeScript(script: string, written: Set<string>, variant: Variant) {
+  private async writeScript(
+    script: string,
+    written: Set<string>,
+    variant: Variant,
+  ) {
     if (!variant.optimizeForProduction) {
       this.copyThrough(script);
       return script;
@@ -333,9 +400,12 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
 
     // loading these lazily here so they never load in non-production builds.
     // The node cache will ensures we only load them once.
-    const [Terser, srcURL] = await Promise.all([import('terser'), import('source-map-url')]);
+    const [Terser, srcURL] = await Promise.all([
+      import("terser"),
+      import("source-map-url"),
+    ]);
 
-    let inCode = readFileSync(join(this.pathToVanillaApp, script), 'utf8');
+    let inCode = readFileSync(join(this.pathToVanillaApp, script), "utf8");
     let terserOpts: MinifyOptions = {};
     let fileRelativeSourceMapURL;
     let appRelativeSourceMapURL;
@@ -344,7 +414,9 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
       appRelativeSourceMapURL = join(dirname(script), fileRelativeSourceMapURL);
       let content;
       try {
-        content = readJSONSync(join(this.pathToVanillaApp, appRelativeSourceMapURL));
+        content = readJSONSync(
+          join(this.pathToVanillaApp, appRelativeSourceMapURL),
+        );
       } catch (err) {
         // the script refers to a sourcemap that doesn't exist, so we just leave
         // the map out.
@@ -353,7 +425,10 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
         terserOpts.sourceMap = { content, url: fileRelativeSourceMapURL };
       }
     }
-    let { code: outCode, map: outMap } = await Terser.default.minify(inCode, terserOpts);
+    let { code: outCode, map: outMap } = await Terser.default.minify(
+      inCode,
+      terserOpts,
+    );
     let finalFilename = this.getFingerprintedFilename(script, outCode!);
     outputFileSync(join(this.outputPath, finalFilename), outCode!);
     written.add(script);
@@ -364,15 +439,19 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
     return finalFilename;
   }
 
-  private async writeStyle(style: string, written: Set<string>, variant: Variant) {
+  private async writeStyle(
+    style: string,
+    written: Set<string>,
+    variant: Variant,
+  ) {
     if (!variant.optimizeForProduction) {
       this.copyThrough(style);
       written.add(style);
       return style;
     }
 
-    const csso = await import('csso');
-    const cssContent = readFileSync(join(this.pathToVanillaApp, style), 'utf8');
+    const csso = await import("csso");
+    const cssContent = readFileSync(join(this.pathToVanillaApp, style), "utf8");
     const minifiedCss = csso.minify(cssContent).css;
 
     let finalFilename = this.getFingerprintedFilename(style, minifiedCss);
@@ -381,17 +460,25 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
     return finalFilename;
   }
 
-  private async provideErrorContext(message: string, messageParams: any[], fn: () => Promise<void>) {
+  private async provideErrorContext(
+    message: string,
+    messageParams: any[],
+    fn: () => Promise<void>,
+  ) {
     try {
       return await fn();
     } catch (err) {
       let context = format(message, ...messageParams);
-      err.message = context + ': ' + err.message;
+      err.message = context + ": " + err.message;
       throw err;
     }
   }
 
-  private async writeFiles(stats: BundleSummary, { entrypoints, otherAssets }: AppInfo, variantIndex: number) {
+  private async writeFiles(
+    stats: BundleSummary,
+    { entrypoints, otherAssets }: AppInfo,
+    variantIndex: number,
+  ) {
     // we're doing this ourselves because I haven't seen a webpack 4 HTML plugin
     // that handles multiple HTML entrypoints correctly.
 
@@ -400,61 +487,78 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
     // modules that are imported from JS modules) get passed through without
     // going through rspack.
     for (let entrypoint of entrypoints) {
-      await this.provideErrorContext('needed by %s', [entrypoint.filename], async () => {
-        for (let script of entrypoint.scripts) {
-          if (!stats.entrypoints.has(script)) {
-            const mapping = [] as string[];
-            try {
-              // zero here means we always attribute passthrough scripts to the
-              // first build variant
-              stats.entrypoints.set(script, new Map([[0, mapping]]));
-              mapping.push(await this.writeScript(script, written, this.variants[0]));
-            } catch (err) {
-              if (err.code === 'ENOENT' && err.path === join(this.pathToVanillaApp, script)) {
-                this.consoleWrite(
-                  `warning: in ${entrypoint.filename} <script src="${script
-                    .split(sep)
-                    .join(
-                      '/'
-                    )}"> does not exist on disk. If this is intentional, use a data-embroider-ignore attribute.`
+      await this.provideErrorContext(
+        "needed by %s",
+        [entrypoint.filename],
+        async () => {
+          for (let script of entrypoint.scripts) {
+            if (!stats.entrypoints.has(script)) {
+              const mapping = [] as string[];
+              try {
+                // zero here means we always attribute passthrough scripts to the
+                // first build variant
+                stats.entrypoints.set(script, new Map([[0, mapping]]));
+                mapping.push(
+                  await this.writeScript(script, written, this.variants[0]),
                 );
-              } else {
-                throw err;
+              } catch (err) {
+                if (
+                  err.code === "ENOENT" &&
+                  err.path === join(this.pathToVanillaApp, script)
+                ) {
+                  this.consoleWrite(
+                    `warning: in ${entrypoint.filename} <script src="${script
+                      .split(sep)
+                      .join(
+                        "/",
+                      )}"> does not exist on disk. If this is intentional, use a data-embroider-ignore attribute.`,
+                  );
+                } else {
+                  throw err;
+                }
               }
             }
           }
-        }
-        for (let style of entrypoint.styles) {
-          if (!stats.entrypoints.has(style)) {
-            const mapping = [] as string[];
-            try {
-              // zero here means we always attribute passthrough styles to the
-              // first build variant
-              stats.entrypoints.set(style, new Map([[0, mapping]]));
-              mapping.push(await this.writeStyle(style, written, this.variants[0]));
-            } catch (err) {
-              if (err.code === 'ENOENT' && err.path === join(this.pathToVanillaApp, style)) {
-                this.consoleWrite(
-                  `warning: in ${entrypoint.filename}  <link rel="stylesheet" href="${style
-                    .split(sep)
-                    .join(
-                      '/'
-                    )}"> does not exist on disk. If this is intentional, use a data-embroider-ignore attribute.`
+          for (let style of entrypoint.styles) {
+            if (!stats.entrypoints.has(style)) {
+              const mapping = [] as string[];
+              try {
+                // zero here means we always attribute passthrough styles to the
+                // first build variant
+                stats.entrypoints.set(style, new Map([[0, mapping]]));
+                mapping.push(
+                  await this.writeStyle(style, written, this.variants[0]),
                 );
-              } else {
-                throw err;
+              } catch (err) {
+                if (
+                  err.code === "ENOENT" &&
+                  err.path === join(this.pathToVanillaApp, style)
+                ) {
+                  this.consoleWrite(
+                    `warning: in ${entrypoint.filename}  <link rel="stylesheet" href="${style
+                      .split(sep)
+                      .join(
+                        "/",
+                      )}"> does not exist on disk. If this is intentional, use a data-embroider-ignore attribute.`,
+                  );
+                } else {
+                  throw err;
+                }
               }
             }
           }
-        }
-      });
+        },
+      );
     }
     // we need to wait for both compilers before writing html entrypoint
     await this.incrementBarrier();
     // only the first variant should write it.
     if (variantIndex === 0) {
       for (let entrypoint of entrypoints) {
-        this.writeIfChanged(join(this.outputPath, entrypoint.filename), entrypoint.render(stats));
+        this.writeIfChanged(
+          join(this.outputPath, entrypoint.filename),
+          entrypoint.render(stats),
+        );
         written.add(entrypoint.filename);
       }
     }
@@ -462,9 +566,13 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
     for (let relativePath of otherAssets) {
       if (!written.has(relativePath)) {
         written.add(relativePath);
-        await this.provideErrorContext(`while copying app's assets`, [], async () => {
-          this.copyThrough(relativePath);
-        });
+        await this.provideErrorContext(
+          `while copying app's assets`,
+          [],
+          async () => {
+            this.copyThrough(relativePath);
+          },
+        );
       }
     }
   }
@@ -477,7 +585,7 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
   // a full page reload when that wasn't really necessary.
   private writeIfChanged(filename: string, content: string) {
     if (this.lastContents.get(filename) !== content) {
-      outputFileSync(filename, content, 'utf8');
+      outputFileSync(filename, content, "utf8");
       this.lastContents.set(filename, content);
     }
   }
@@ -486,7 +594,11 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
     let sourcePath = join(this.pathToVanillaApp, relativePath);
     let newStats = statSync(sourcePath);
     let oldStats = this.passthroughCache.get(sourcePath);
-    if (!oldStats || oldStats.mtimeMs !== newStats.mtimeMs || oldStats.size !== newStats.size) {
+    if (
+      !oldStats ||
+      oldStats.mtimeMs !== newStats.mtimeMs ||
+      oldStats.size !== newStats.size
+    ) {
       debug(`emitting ${relativePath}`);
       copySync(sourcePath, join(this.outputPath, relativePath));
       this.passthroughCache.set(sourcePath, newStats);
@@ -494,16 +606,20 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
   }
 
   private getFingerprintedFilename(filename: string, content: string): string {
-    let md5 = crypto.createHash('md5');
+    let md5 = crypto.createHash("md5");
     md5.update(content);
-    let hash = md5.digest('hex');
+    let hash = md5.digest("hex");
 
-    let fileParts = filename.split('.');
+    let fileParts = filename.split(".");
     fileParts.splice(fileParts.length - 1, 0, hash);
-    return fileParts.join('.');
+    return fileParts.join(".");
   }
 
-  private summarizeStats(stats: RspackStats, variant: Variant, variantIndex: number): void {
+  private summarizeStats(
+    stats: RspackStats,
+    variant: Variant,
+    variantIndex: number,
+  ): void {
     let output = this.bundleSummary;
     let { entrypoints, chunks } = stats.toJson({
       all: false,
@@ -529,9 +645,9 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
 
       getOrCreate(output.entrypoints, id, () => new Map()).set(
         variantIndex,
-        entrypointAssets.map(asset => asset.name)
+        entrypointAssets.map((asset) => asset.name),
       );
-      if (variant.runtime !== 'browser') {
+      if (variant.runtime !== "browser") {
         // in the browser we don't need to worry about lazy assets (they will be
         // handled automatically by rspack as needed), but in any other runtime
         // we need the ability to preload them
@@ -539,8 +655,10 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
           id,
           flatMap(
             chunks.filter((chunk: StatsChunk) => chunk.runtime?.includes(id)),
-            (chunk: StatsChunk) => chunk.files
-          ).filter(file => !entrypointAssets?.find(a => a.name === file)) as string[]
+            (chunk: StatsChunk) => chunk.files,
+          ).filter(
+            (file) => !entrypointAssets?.find((a) => a.name === file),
+          ) as string[],
         );
       }
     }
@@ -559,24 +677,26 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
           if (!stats) {
             // this doesn't really happen, but rspack's types imply that it
             // could, so we just satisfy typescript here
-            throw new Error('bug: no stats and no err');
+            throw new Error("bug: no stats and no err");
           }
           if (stats.hasErrors()) {
             // write all the stats output to the console
             this.consoleWrite(
               stats.toString({
                 colors: Boolean(supportsColor.stdout),
-              })
+              }),
             );
 
             // the typing for MultiCompiler are all foobared.
-            throw this.findBestError(flatMap((stats as any).stats, s => s.compilation.errors));
+            throw this.findBestError(
+              flatMap((stats as any).stats, (s) => s.compilation.errors),
+            );
           }
           if (stats.hasWarnings() || process.env.VANILLA_VERBOSE) {
             this.consoleWrite(
               stats.toString({
                 colors: Boolean(supportsColor.stdout),
-              })
+              }),
             );
           }
           resolve(stats);
@@ -592,21 +712,27 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
     plugins: RspackPluginInstance[];
   } {
     let cssLoader = {
-      loader: 'css-loader',
+      loader: "css-loader",
       options: {
         url: true,
         import: true,
-        modules: 'global',
+        modules: "global",
         ...this.extraCssLoaderOptions,
       },
     };
 
-    if (!variant.optimizeForProduction && variant.runtime === 'browser') {
+    if (!variant.optimizeForProduction && variant.runtime === "browser") {
       // in development builds that only need to work in the browser (not
       // fastboot), we can use style-loader because it's fast
       return {
         loaders: [
-          { loader: 'style-loader', options: { injectType: 'styleTag', ...this.extraStyleLoaderOptions } },
+          {
+            loader: "style-loader",
+            options: {
+              injectType: "styleTag",
+              ...this.extraStyleLoaderOptions,
+            },
+          },
           cssLoader,
         ],
         plugins: [],
@@ -624,7 +750,7 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
             //
             // but in fastboot, we need to disable that in favor of doing our
             // own insertion of `<link>` tags in the HTML
-            runtime: variant.runtime === 'browser',
+            runtime: variant.runtime === "browser",
             // It's not reasonable to make assumptions about order when doing CSS via modules
             ignoreOrder: true,
             ...this.extraCssPluginOptions,
@@ -642,20 +768,28 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
     }
 
     if (!error.file) {
-      error.file = file || (error.loc ? error.loc.file : null) || (error.location ? error.location.file : null);
+      error.file =
+        file ||
+        (error.loc ? error.loc.file : null) ||
+        (error.location ? error.location.file : null);
     }
     if (error.line == null) {
-      error.line = (error.loc ? error.loc.line : null) || (error.location ? error.location.line : null);
+      error.line =
+        (error.loc ? error.loc.line : null) ||
+        (error.location ? error.location.line : null);
     }
-    if (typeof error.message === 'string') {
+    if (typeof error.message === "string") {
       if (error.module?.context) {
-        error.message = error.message.replace(error.module.context, error.module.userRequest);
+        error.message = error.message.replace(
+          error.module.context,
+          error.module.userRequest,
+        );
       }
 
       // the tmpdir on OSX is horribly long and makes error messages hard to
       // read. This is doing the same as String.prototype.replaceAll, which node
       // doesn't have yet.
-      error.message = error.message.split(tmpdir).join('$TMPDIR');
+      error.message = error.message.split(tmpdir).join("$TMPDIR");
     }
     return error;
   }
@@ -681,17 +815,20 @@ function makeBabelLoaderOptions(
   _majorVersion: 7,
   variant: Variant,
   appBabelConfigPath: string,
-  extraOptions: BabelLoaderOptions | undefined
+  extraOptions: BabelLoaderOptions | undefined,
 ) {
-  const cacheDirectory = getPackagerCacheDir('rspack-babel-loader');
-  const options: BabelLoaderOptions & { variant: Variant; appBabelConfigPath: string } = {
+  const cacheDirectory = getPackagerCacheDir("rspack-babel-loader");
+  const options: BabelLoaderOptions & {
+    variant: Variant;
+    appBabelConfigPath: string;
+  } = {
     variant,
     appBabelConfigPath,
     cacheDirectory,
     ...extraOptions,
   };
   return {
-    loader: 'babel-loader-9',
+    loader: "babel-loader-9",
     options,
   };
 }
