@@ -1,0 +1,18 @@
+{
+  "solution": {
+    "embroider-rspack": {
+      "impact": "patch",
+      "oldVersion": "4.1.0",
+      "newVersion": "4.1.1",
+      "tagName": "latest",
+      "constraints": [
+        {
+          "impact": "patch",
+          "reason": "Appears in changelog section :house: Internal"
+        }
+      ],
+      "pkgJSONPath": "./package.json"
+    }
+  },
+  "description": "## Release (2026-02-24)\n\n* embroider-rspack 4.1.1 (patch)\n\n#### :house: Internal\n* `embroider-rspack`\n  * [#4](https://github.com/poulet42/embroider-rspack/pull/4) add CHANGELOG.md file ([@poulet42](https://github.com/poulet42))\n  * [#2](https://github.com/poulet42/embroider-rspack/pull/2) wrap runRspack body in compiler.close to fix hot reload ([@poulet42](https://github.com/poulet42))\n  * [#1](https://github.com/poulet42/embroider-rspack/pull/1) [fuckedup] Prepare Release vnull ([@github-actions[bot]](https://github.com/apps/github-actions))\n\n#### Committers: 2\n- Corentin ([@poulet42](https://github.com/poulet42))\n- GitHub Actions [Bot] ([@github-actions](https://github.com/apps/github-actions))\n"
+}
