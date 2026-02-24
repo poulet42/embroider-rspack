@@ -2,6 +2,17 @@
 
 ## Release (2026-02-24)
 
+* embroider-rspack 4.2.0 (minor)
+
+#### :rocket: Enhancement
+* `embroider-rspack`
+  * [#6](https://github.com/poulet42/embroider-rspack/pull/6) inline persistent cache configuration in ember-rspack ([@poulet42](https://github.com/poulet42))
+
+#### Committers: 1
+- Corentin ([@poulet42](https://github.com/poulet42))
+
+## Release (2026-02-24)
+
 * embroider-rspack 4.1.1 (patch)
 
 #### :house: Internal
