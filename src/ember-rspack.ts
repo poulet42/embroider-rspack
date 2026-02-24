@@ -667,42 +667,54 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
   private runRspack(compiler: MultiCompiler): Promise<MultiStats> {
     return new Promise((resolve, reject) => {
       compiler.run((err: Error | null | undefined, stats?: MultiStats) => {
-        try {
-          if (err) {
-            if (stats) {
-              this.consoleWrite(stats.toString({}));
+        // Close the compiler to flush the persistent cache to disk.
+        // rspack's cache.shutdown() (which writes the on-disk cache) is only
+        // triggered inside compiler.close(). Without this call, no cache files
+        // are ever written even when experiments.cache.type is 'persistent'.
+        compiler.close((closeErr) => {
+          if (closeErr) {
+            debug("Failed to close rspack compiler: %O", closeErr);
+          }
+          // Invalidate so the next build creates a fresh compiler rather than
+          // trying to reuse this closed one.
+          this.lastRspack = undefined;
+          try {
+            if (err) {
+              if (stats) {
+                this.consoleWrite(stats.toString({}));
+              }
+              throw err;
             }
-            throw err;
-          }
-          if (!stats) {
-            // this doesn't really happen, but rspack's types imply that it
-            // could, so we just satisfy typescript here
-            throw new Error("bug: no stats and no err");
-          }
-          if (stats.hasErrors()) {
-            // write all the stats output to the console
-            this.consoleWrite(
-              stats.toString({
-                colors: Boolean(supportsColor.stdout),
-              }),
-            );
+            if (!stats) {
+              // this doesn't really happen, but rspack's types imply that it
+              // could, so we just satisfy typescript here
+              throw new Error("bug: no stats and no err");
+            }
+            if (stats.hasErrors()) {
+              // write all the stats output to the console
+              this.consoleWrite(
+                stats.toString({
+                  colors: Boolean(supportsColor.stdout),
+                }),
+              );
 
-            // the typing for MultiCompiler are all foobared.
-            throw this.findBestError(
-              flatMap((stats as any).stats, (s) => s.compilation.errors),
-            );
+              // the typing for MultiCompiler are all foobared.
+              throw this.findBestError(
+                flatMap((stats as any).stats, (s) => s.compilation.errors),
+              );
+            }
+            if (stats.hasWarnings() || process.env.VANILLA_VERBOSE) {
+              this.consoleWrite(
+                stats.toString({
+                  colors: Boolean(supportsColor.stdout),
+                }),
+              );
+            }
+            resolve(stats);
+          } catch (e) {
+            reject(e);
           }
-          if (stats.hasWarnings() || process.env.VANILLA_VERBOSE) {
-            this.consoleWrite(
-              stats.toString({
-                colors: Boolean(supportsColor.stdout),
-              }),
-            );
-          }
-          resolve(stats);
-        } catch (e) {
-          reject(e);
-        }
+        });
       });
     });
   }
