@@ -354,6 +354,26 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
           "style-loader": require.resolve("style-loader"),
         },
       },
+      experiments: {
+        cache: {
+          type: "persistent" as const,
+          // Invalidate the cache when the babel config changes
+          buildDependencies: [join(this.pathToVanillaApp, babel.filename)],
+          // Include variant config in the version so dev and production caches
+          // don't share the same slot
+          version: JSON.stringify(variant),
+          snapshot: {
+            // Use version-based (fast) checks for node_modules instead of
+            // content-hashing every file. Only invalidated when package versions
+            // change, not on every cold start.
+            managedPaths: [join(this.pathToVanillaApp, "node_modules")],
+          },
+          storage: {
+            type: "filesystem" as const,
+            directory: getPackagerCacheDir(`rspack-build-${variantIndex}`),
+          },
+        },
+      },
     };
   }
 
