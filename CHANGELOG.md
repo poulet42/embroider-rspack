@@ -1,5 +1,16 @@
 # Changelog
 
+## Release (2026-04-19)
+
+* embroider-rspack 4.2.1 (patch)
+
+#### :bug: Bug Fix
+* `embroider-rspack`
+  * [#8](https://github.com/poulet42/embroider-rspack/pull/8) fix oom issue ([@poulet42](https://github.com/poulet42))
+
+#### Committers: 1
+- Corentin ([@poulet42](https://github.com/poulet42))
+
 ## Release (2026-02-24)
 
 * embroider-rspack 4.2.0 (minor)
