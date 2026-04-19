@@ -32,8 +32,6 @@ import type {
   Configuration,
   RuleSetUseItem,
   RspackPluginInstance,
-  Compiler,
-  MultiCompiler,
   MultiStats,
   Stats as RspackStats,
   StatsChunk,
@@ -45,6 +43,7 @@ import {
   outputFileSync,
   copySync,
   statSync,
+  readdirSync,
   readJSONSync,
 } from "fs-extra";
 import { join, dirname, relative, sep } from "path";
@@ -88,43 +87,8 @@ function equalAppInfo(left: AppInfo, right: AppInfo): boolean {
   );
 }
 
-type BeginFn = (total: number) => void;
-type IncrementFn = () => Promise<void>;
-
-function createBarrier(): [BeginFn, IncrementFn] {
-  const barriers: Array<[() => void, (e: unknown) => void]> = [];
-  let done = true;
-  let limit = 0;
-  return [begin, increment];
-
-  function begin(newLimit: number) {
-    if (!done) flush(new Error("begin called before limit reached"));
-    done = false;
-    limit = newLimit;
-  }
-
-  async function increment() {
-    if (done) {
-      throw new Error("increment after limit reach");
-    }
-    const promise = new Promise<void>((resolve, reject) => {
-      barriers.push([resolve, reject]);
-    });
-    if (barriers.length === limit) {
-      flush();
-    }
-    await promise;
-  }
-
-  function flush(err?: Error) {
-    for (const [resolve, reject] of barriers) {
-      if (err) reject(err);
-      else resolve();
-    }
-    barriers.length = 0;
-    done = true;
-  }
-}
+import type { MultiCompiler } from "@rspack/core";
+type MultiWatching = ReturnType<MultiCompiler["watch"]>;
 
 // we want to ensure that not only does our instance conform to
 // PackagerInstance, but our constructor conforms to Packager. So instead of
@@ -142,8 +106,23 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
   private extraCssPluginOptions: object | undefined;
   private extraStyleLoaderOptions: object | undefined;
   private _bundleSummary: BundleSummary | undefined;
-  private beginBarrier: BeginFn;
-  private incrementBarrier: IncrementFn;
+
+  // Watch-mode state. The watcher runs freely — rspack detects file changes via
+  // its own watchpack integration. build() waits for the next completed build.
+  private watcher: MultiWatching | undefined;
+  private lastAppInfo: AppInfo | undefined;
+  // Monotonically increasing counter: incremented each time a successful build
+  // is fully written to disk. build() compares against lastSeenCount to decide
+  // whether to wait or return immediately.
+  private buildCompletionCount = 0;
+  private lastSeenCompletionCount = 0;
+  private pendingBuildResolvers: Array<{
+    resolve: () => void;
+    reject: (e: unknown) => void;
+  }> = [];
+  // Timestamp (ms) when the last successful handleBuildComplete callback fired.
+  // Used to detect which files in pathToVanillaApp changed since then.
+  private lastBuildTime = 0;
 
   constructor(
     private appRoot: string,
@@ -165,7 +144,6 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
     this.extraCssLoaderOptions = options?.cssLoaderOptions;
     this.extraCssPluginOptions = options?.cssPluginOptions;
     this.extraStyleLoaderOptions = options?.styleLoaderOptions;
-    [this.beginBarrier, this.incrementBarrier] = createBarrier();
   }
 
   get bundleSummary(): BundleSummary {
@@ -181,20 +159,73 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
   }
 
   async build(): Promise<void> {
-    try {
-      debug("Starting rspack build");
-      this._bundleSummary = undefined;
-      this.beginBarrier(this.variants.length);
-      let appInfo = this.examineApp();
-      debug("App examined, creating rspack compiler");
-      let compiler = this.getRspack(appInfo);
-      debug("Compiler created, running rspack");
-      await this.runRspack(compiler);
-      debug("Rspack build complete");
-    } catch (error) {
-      debug("Rspack build failed with error: %O", error);
-      throw error;
+    debug("Starting rspack build");
+    let appInfo = this.examineApp();
+    this.ensureWatcher(appInfo);
+
+    // If a build has completed since we last returned from build(), the output
+    // is already fresh — return immediately.
+    if (this.buildCompletionCount > this.lastSeenCompletionCount) {
+      this.lastSeenCompletionCount = this.buildCompletionCount;
+      debug("Rspack build already complete, returning immediately");
+      return;
     }
+
+    // Otherwise wait for the next completed build.
+    debug(`build() waiting: buildCompletionCount=${this.buildCompletionCount} lastSeen=${this.lastSeenCompletionCount}`);
+    const waiting = new Promise<void>((resolve, reject) => {
+      this.pendingBuildResolvers.push({ resolve, reject });
+    }).then(() => {
+      this.lastSeenCompletionCount = this.buildCompletionCount;
+      debug("Rspack build complete");
+    });
+    // Explicitly kick off a rebuild. rspack's watchpack `aggregated` event can
+    // miss the window between builds (it uses `once`). We scan pathToVanillaApp
+    // for files newer than the last build and pass them explicitly so rspack's
+    // Rust core knows which modules to recompile (empty modifiedFiles = cache hit).
+    // Skip for the very first build: processQueueWorker auto-starts it.
+    if (this.buildCompletionCount > 0) {
+      const changedFiles = this.findChangedFiles(this.lastBuildTime);
+      debug(`build() found ${changedFiles.size} changed file(s) since last build`);
+      this.watcher!.invalidateWithChangesAndRemovals(changedFiles, new Set());
+    }
+    return waiting;
+  }
+
+  private ensureWatcher(appInfo: AppInfo): void {
+    if (
+      this.watcher &&
+      this.lastAppInfo &&
+      equalAppInfo(appInfo, this.lastAppInfo)
+    ) {
+      debug("reusing rspack compiler");
+      // Update lastAppInfo so writeAllFiles uses the latest entrypoints/HTML
+      this.lastAppInfo = appInfo;
+      return;
+    }
+
+    debug("configuring new rspack compiler");
+    if (this.watcher) {
+      this.watcher.close(() => {});
+      this.watcher = undefined;
+    }
+
+    this.lastAppInfo = appInfo;
+    // Ensure the next build() call waits for this new compiler's first build.
+    this.lastSeenCompletionCount = this.buildCompletionCount;
+
+    let config = this.variants.map((variant, variantIndex) =>
+      mergeWith(
+        {},
+        this.configureRspack(appInfo, variant, variantIndex),
+        this.extraConfig,
+        appendArrays,
+      ),
+    );
+    let compiler = rspack(config);
+    this.watcher = compiler.watch({}, (err, stats) =>
+      this.handleBuildComplete(err, stats),
+    );
   }
 
   private examineApp(): AppInfo {
@@ -266,25 +297,21 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
       mode: variant.optimizeForProduction ? "production" : "development",
       context: this.pathToVanillaApp,
       entry,
+      experiments: {
+        cache: {
+          type: "persistent",
+          storage: {
+            type: "filesystem",
+            directory: join(getPackagerCacheDir("rspack"), `variant-${variantIndex}`),
+          },
+        },
+      },
       performance: {
         hints: false,
       },
       plugins: [
         ...stylePlugins,
         new EmbroiderPlugin(resolverConfig, babelLoaderPrefix),
-        (compiler: Compiler) => {
-          compiler.hooks.done.tapPromise(
-            "EmbroiderPlugin",
-            async (stats: RspackStats) => {
-              this.summarizeStats(stats, variant, variantIndex);
-              await this.writeFiles(
-                this.bundleSummary,
-                this.lastAppInfo!,
-                variantIndex,
-              );
-            },
-          );
-        },
       ],
       node: false,
       module: {
@@ -354,58 +381,102 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
           "style-loader": require.resolve("style-loader"),
         },
       },
-      experiments: {
-        cache: {
-          type: "persistent" as const,
-          // Invalidate the cache when the babel config changes
-          buildDependencies: [join(this.pathToVanillaApp, babel.filename)],
-          // Include variant config in the version so dev and production caches
-          // don't share the same slot
-          version: JSON.stringify(variant),
-          snapshot: {
-            // Use version-based (fast) checks for node_modules instead of
-            // content-hashing every file. Only invalidated when package versions
-            // change, not on every cold start.
-            managedPaths: [join(this.pathToVanillaApp, "node_modules")],
-          },
-          storage: {
-            type: "filesystem" as const,
-            directory: getPackagerCacheDir(`rspack-build-${variantIndex}`),
-          },
-        },
-      },
     };
   }
 
-  private lastAppInfo: AppInfo | undefined;
-  private lastRspack: MultiCompiler | undefined;
+  private handleBuildCallCount = 0;
 
-  private getRspack(appInfo: AppInfo) {
-    if (
-      this.lastRspack &&
-      this.lastAppInfo &&
-      equalAppInfo(appInfo, this.lastAppInfo)
-    ) {
-      debug(`reusing rspack config`);
-      // the appInfos result in equal rspack configs so we don't need to
-      // reconfigure rspack. But they may contain other changes (like HTML
-      // content changes that don't alter the rspack config) so we still want
-      // lastAppInfo to update so that the latest one will be seen in the
-      // rspack post-build.
-      this.lastAppInfo = appInfo;
-      return this.lastRspack;
+  private handleBuildComplete(
+    err: Error | null | undefined,
+    stats: MultiStats | undefined,
+  ): void {
+    const callN = ++this.handleBuildCallCount;
+    debug(`handleBuildComplete #${callN} called, pendingResolvers=${this.pendingBuildResolvers.length}`);
+    this._bundleSummary = undefined;
+
+    if (err) {
+      debug(`handleBuildComplete #${callN} error: ${err.message}`);
+      if (stats) {
+        this.consoleWrite(stats.toString({}));
+      }
+      for (const { reject } of this.pendingBuildResolvers.splice(0)) reject(err);
+      return;
     }
-    debug(`configuring rspack`);
-    let config = this.variants.map((variant, variantIndex) =>
-      mergeWith(
-        {},
-        this.configureRspack(appInfo, variant, variantIndex),
-        this.extraConfig,
-        appendArrays,
-      ),
+    if (!stats) {
+      const e = new Error("bug: no stats and no err");
+      debug(`handleBuildComplete #${callN} bug: no stats`);
+      for (const { reject } of this.pendingBuildResolvers.splice(0)) reject(e);
+      return;
+    }
+    if (stats.hasErrors()) {
+      this.consoleWrite(
+        stats.toString({
+          colors: Boolean(supportsColor.stdout),
+        }),
+      );
+      const e = this.findBestError(
+        flatMap((stats as any).stats, (s) => s.compilation.errors),
+      );
+      debug(`handleBuildComplete #${callN} build errors`);
+      for (const { reject } of this.pendingBuildResolvers.splice(0)) reject(e);
+      return;
+    }
+    if (stats.hasWarnings() || process.env.VANILLA_VERBOSE) {
+      this.consoleWrite(
+        stats.toString({
+          colors: Boolean(supportsColor.stdout),
+        }),
+      );
+    }
+
+    let allStats: RspackStats[] = (stats as any).stats;
+    for (let [i, variantStats] of allStats.entries()) {
+      this.summarizeStats(variantStats, this.variants[i]!, i);
+    }
+
+    // Capture bundleSummary now before any async work; splice resolvers AFTER
+    // writeAllFiles so that any build() calls made during the write are also resolved.
+    const bundleSummary = this.bundleSummary;
+    debug(`handleBuildComplete #${callN} starting writeAllFiles`);
+    this.writeAllFiles(bundleSummary, this.lastAppInfo!).then(
+      () => {
+        debug(`handleBuildComplete #${callN} writeAllFiles done, resolving ${this.pendingBuildResolvers.length} resolver(s)`);
+        this.lastBuildTime = Date.now();
+        this.buildCompletionCount++;
+        for (const { resolve } of this.pendingBuildResolvers.splice(0)) resolve();
+      },
+      (e) => {
+        debug(`handleBuildComplete #${callN} writeAllFiles error: ${e.message}`);
+        for (const { reject } of this.pendingBuildResolvers.splice(0)) reject(e);
+      },
     );
-    this.lastAppInfo = appInfo;
-    return (this.lastRspack = rspack(config));
+  }
+
+  private findChangedFiles(since: number): Set<string> {
+    const changed = new Set<string>();
+    const scan = (dir: string) => {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.name === 'node_modules') continue;
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          scan(full);
+        } else {
+          try {
+            if (statSync(full).mtimeMs > since) changed.add(full);
+          } catch {
+            // ignore stat errors (e.g. symlink targets that disappeared)
+          }
+        }
+      }
+    };
+    scan(this.pathToVanillaApp);
+    return changed;
   }
 
   private async writeScript(
@@ -494,10 +565,9 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
     }
   }
 
-  private async writeFiles(
+  private async writeAllFiles(
     stats: BundleSummary,
     { entrypoints, otherAssets }: AppInfo,
-    variantIndex: number,
   ) {
     // we're doing this ourselves because I haven't seen a webpack 4 HTML plugin
     // that handles multiple HTML entrypoints correctly.
@@ -570,17 +640,13 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
         },
       );
     }
-    // we need to wait for both compilers before writing html entrypoint
-    await this.incrementBarrier();
-    // only the first variant should write it.
-    if (variantIndex === 0) {
-      for (let entrypoint of entrypoints) {
-        this.writeIfChanged(
-          join(this.outputPath, entrypoint.filename),
-          entrypoint.render(stats),
-        );
-        written.add(entrypoint.filename);
-      }
+
+    for (let entrypoint of entrypoints) {
+      this.writeIfChanged(
+        join(this.outputPath, entrypoint.filename),
+        entrypoint.render(stats),
+      );
+      written.add(entrypoint.filename);
     }
 
     for (let relativePath of otherAssets) {
@@ -682,61 +748,6 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
         );
       }
     }
-  }
-
-  private runRspack(compiler: MultiCompiler): Promise<MultiStats> {
-    return new Promise((resolve, reject) => {
-      compiler.run((err: Error | null | undefined, stats?: MultiStats) => {
-        // Close the compiler to flush the persistent cache to disk.
-        // rspack's cache.shutdown() (which writes the on-disk cache) is only
-        // triggered inside compiler.close(). Without this call, no cache files
-        // are ever written even when experiments.cache.type is 'persistent'.
-        compiler.close((closeErr) => {
-          if (closeErr) {
-            debug("Failed to close rspack compiler: %O", closeErr);
-          }
-          // Invalidate so the next build creates a fresh compiler rather than
-          // trying to reuse this closed one.
-          this.lastRspack = undefined;
-          try {
-            if (err) {
-              if (stats) {
-                this.consoleWrite(stats.toString({}));
-              }
-              throw err;
-            }
-            if (!stats) {
-              // this doesn't really happen, but rspack's types imply that it
-              // could, so we just satisfy typescript here
-              throw new Error("bug: no stats and no err");
-            }
-            if (stats.hasErrors()) {
-              // write all the stats output to the console
-              this.consoleWrite(
-                stats.toString({
-                  colors: Boolean(supportsColor.stdout),
-                }),
-              );
-
-              // the typing for MultiCompiler are all foobared.
-              throw this.findBestError(
-                flatMap((stats as any).stats, (s) => s.compilation.errors),
-              );
-            }
-            if (stats.hasWarnings() || process.env.VANILLA_VERBOSE) {
-              this.consoleWrite(
-                stats.toString({
-                  colors: Boolean(supportsColor.stdout),
-                }),
-              );
-            }
-            resolve(stats);
-          } catch (e) {
-            reject(e);
-          }
-        });
-      });
-    });
   }
 
   private setupStyleConfig(variant: Variant): {

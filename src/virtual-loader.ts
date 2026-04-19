@@ -22,7 +22,21 @@ export default function virtualLoader(this: LoaderContext<unknown>) {
     }
     let { resolver } = setup(appRoot);
     this.resourcePath = filename;
-    return virtualContent(filename, resolver);
+    try {
+      return virtualContent(filename, resolver);
+    } catch (err) {
+      // v1 addons that weren't rewritten by Embroider resolve to their original
+      // pnpm location, where isV2Ember() is false. Returning empty content is
+      // correct: unrewritten v1 packages have no v2 implicit modules to emit.
+      if (
+        filename.includes("-embroider-implicit-") &&
+        err instanceof Error &&
+        err.message.includes("non-ember package")
+      ) {
+        return "";
+      }
+      throw err;
+    }
   }
   throw new Error(
     `embroider-rspack/src/virtual-loader received unexpected request: ${this.query}`,
