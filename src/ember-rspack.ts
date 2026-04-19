@@ -269,7 +269,7 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
   private configureRspack(
     appInfo: AppInfo,
     variant: Variant,
-    _variantIndex: number,
+    variantIndex: number,
   ): Configuration {
     const { entrypoints, babel, publicAssetURL, packageName, resolverConfig } =
       appInfo;
@@ -297,6 +297,15 @@ const Rspack: PackagerConstructor<Options> = class Rspack implements Packager {
       mode: variant.optimizeForProduction ? "production" : "development",
       context: this.pathToVanillaApp,
       entry,
+      experiments: {
+        cache: {
+          type: "persistent",
+          storage: {
+            type: "filesystem",
+            directory: join(getPackagerCacheDir("rspack"), `variant-${variantIndex}`),
+          },
+        },
+      },
       performance: {
         hints: false,
       },
