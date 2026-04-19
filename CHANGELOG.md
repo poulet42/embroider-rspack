@@ -2,6 +2,25 @@
 
 ## Release (2026-04-19)
 
+* embroider-rspack 4.2.3 (patch)
+
+#### :bug: Bug Fix
+* `embroider-rspack`
+  * [#8](https://github.com/poulet42/embroider-rspack/pull/8) fix oom issue ([@poulet42](https://github.com/poulet42))
+
+#### :house: Internal
+* `embroider-rspack`
+  * [#12](https://github.com/poulet42/embroider-rspack/pull/12) set packageManager version in package.json ([@poulet42](https://github.com/poulet42))
+  * [#11](https://github.com/poulet42/embroider-rspack/pull/11) Prepare Release v4.2.2 ([@github-actions[bot]](https://github.com/apps/github-actions))
+  * [#10](https://github.com/poulet42/embroider-rspack/pull/10) pull new publish workflow from upstream ([@poulet42](https://github.com/poulet42))
+  * [#9](https://github.com/poulet42/embroider-rspack/pull/9) Prepare Release v4.2.1 ([@github-actions[bot]](https://github.com/apps/github-actions))
+
+#### Committers: 2
+- Corentin ([@poulet42](https://github.com/poulet42))
+- GitHub Actions [Bot] ([@github-actions](https://github.com/apps/github-actions))
+
+## Release (2026-04-19)
+
 * embroider-rspack 4.2.2 (patch)
 
 #### :bug: Bug Fix
